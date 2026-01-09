@@ -33,7 +33,7 @@ w_single = np.zeros((3, N))
 w_double = np.zeros((3, N))
 w_gradientDescent = np.zeros((3, N))
 w_prev = np.zeros((3, 1))
-iterMax = 3000
+iterMax = 10000
 eps = 1e-8
 
 # optimized values of a,b,c assuming no infrequent switching, not solvable cause 3 unknowns and 1 equation:
@@ -109,74 +109,98 @@ def project_TV_ball(W, tau):
     return W_proj
 
 def projectedSubGradientDescent(x,y,N,Lapda,Alpha=1e-0, tol=1e-6):
-    # need the dual function?
-    ## probably not needed unless there is a distributed problem!
-    # need to find subgradient, this is needed due to the norm in the objective function:
-    ## comes from ((y[i]-x[:,i].T@W[:,i])**2)'
-    # normalize?
     x_trim = x[:, 3:]   # 3 x (N-3)
     y_trim = y[3:]      # length (N-3)
     x_norm = x_trim / (np.linalg.norm(x_trim, axis=0, keepdims=True) + eps)
     W_out = np.zeros((3, N-3))
     gradient_F0 = np.zeros_like(W_out)
+    #initial condition
+    W_out[:,0] = np.array(([1,0,-1]))
     for k in range(iterMax):
-        print(k)
+        #print(k)
+        change_norm = 0
         Alpha_value = Alpha/np.sqrt(k+1) 
         gradient_F1 = np.zeros_like(W_out)
         for j in range(N-3):
             gradientTemp1 = 2*x_norm[:,j]*y_trim[j]
             gradientTemp0 = 2*x_norm[:,j]*(x_norm[:,j].T@W_out[:,j])
             gradient_F0[:,j] = gradientTemp0 - gradientTemp1
-        for j in range(1,N-3):
-            change = W_out[:,j]-W_out[:,j-1]
-            change_norm = np.linalg.norm(change,2)
+            if j>=1:
+                change = W_out[:,j]-W_out[:,j-1]
+                change_norm = np.linalg.norm(change,2)
             if change_norm > eps:
                 g = Lapda * change / change_norm
                 gradient_F1[:, j] += g
-                gradient_F1[:, j-1] -= g
-        subgradient = gradient_F0 + gradient_F1
-        W_temp = W_out - Alpha_value*subgradient
-        W_temp2 = project_TV_ball(W_temp, 1)
-        print(np.linalg.norm(W_out))
-        if np.linalg.norm(subgradient)<tol:
+                #gradient_F1[:, j-1] -= g
+            subgradient = gradient_F0[:,j] + gradient_F1[:,j]
+            W_out[:,j] = W_out[:,j] - Alpha_value*subgradient
+        if np.abs(np.linalg.norm(W_out) - np.linalg.norm(w_true)) < tol:
             print("convergence at: ",k)
             break
-        W_out = W_temp2
     return W_out
 
-def subGradientDescent(x,y,N,Lapda,Alpha=1e-2, tol=1e-4):
+def objective(W, x, y, Lapda):
+    obj = 0
+    for i in range(N-3):
+        obj += ((y[i]-x[:,i].T@W[:,i])**2)
+        if i>=1:
+            obj += Lapda*(np.linalg.norm(W[:,i]-W[:,i-1],2))
+        #else:
+            #obj += Lapda*(np.linalg.norm(W[:,i],2))
+    return obj
+
+def subGradientDescent(x,y,N,Lapda,Alpha=1e-0, tol=1e-6):
     # need the dual function?
-    ## probably not needed unless there is a distributed problem!
+    ## Not needed unless there is a distributed problem!
     # need to find subgradient, this is needed due to the norm in the objective function:
     ## comes from ((y[i]-x[:,i].T@W[:,i])**2)'
-    # normalize?
     x_trim = x[:, 3:]   # 3 x (N-3)
     y_trim = y[3:]      # length (N-3)
-    x_norm = x_trim / (np.linalg.norm(x_trim, axis=0, keepdims=True) + eps)
+    x_norm = x_trim / (np.linalg.norm(x_trim, axis=0, keepdims=True)+eps) # normalize
     W_out = np.zeros((3, N-3))
-    gradient_F0 = np.zeros_like(W_out)
+    W_simple = np.zeros_like(W_out)
+    #initial condition?
+    W_out[:,0] = np.array(([1,-0.2,-8])) # something nonzero
+    prev_obj = 1000
     for k in range(iterMax):
-        print(k)
-        Alpha_value = Alpha/np.sqrt(k+1) 
-        gradient_F1 = np.zeros_like(W_out)
+        change_norm = 0
+        subgradient = np.zeros_like(W_out)
+        W_old = W_out.copy()
+        #Alpha_value = Alpha/np.sqrt(k+1) 
         for j in range(N-3):
+            # differential of L2 norm(Y-X.T@W):
             gradientTemp1 = 2*x_norm[:,j]*y_trim[j]
-            gradientTemp0 = 2*x_norm[:,j]*(x_norm[:,j].T@W_out[:,j])
-            gradient_F0[:,j] = gradientTemp0 - gradientTemp1
-        #print(gradient_F0)
-        for j in range(1,N-3):
-            change = W_out[:,j]-W_out[:,j-1]
-            change_norm = np.linalg.norm(change,2)
-            if change_norm > eps:
-                g = Lapda * change / change_norm
-                gradient_F1[:, j] += g
-                gradient_F1[:, j-1] -= g
-        subgradient = gradient_F0 + gradient_F1
-        W_out -= Alpha_value*subgradient
-        print(np.linalg.norm(W_out))
-        if np.linalg.norm(subgradient)<tol:
+            gradientTemp0 = 2*x_norm[:,j]*(x_norm[:,j].T@W_old[:,j])
+            subgradient[:,j] += gradientTemp0 - gradientTemp1
+            if j>=1:
+                # subdifferential for l1 norm(W(t)-W(t-1)):
+                change = W_old[:,j]-W_old[:,j-1]
+                change_norm = np.linalg.norm(change,2)
+            #else:
+                #subgradient[:, j] += Lapda*W_old[:,j]/np.linalg.norm(W_old[:,j],2)
+            if change_norm > eps: # This checks if gradient is bigger then 0, only then does it put the sign, else its 0
+                g = Lapda * change / change_norm # division by 0 would be a problem!
+                subgradient[:, j] += g
+                subgradient[:, j-1] -= g # is this needed???
+        #Polyak step size implementation:
+        # f(x) is objective function
+        # f(x*) is objective function with optimal W
+        # g() is subgradient
+        #subgradient /= (N - 3)
+        obj_W = objective(W_old,x_norm,y_trim,Lapda)
+        objective_value = max(obj_W,0.0)
+        Alpha_value = objective_value/((np.linalg.norm(subgradient)**2)+eps)
+        # subgradient descent steps
+        #W_simple = W_old - Alpha_value * subgradient
+        #W_out = (k * W_out + W_simple) / (k + 1)
+        W_out = W_old - Alpha_value*subgradient
+        # check if objective changes with new iterations of W
+        rel_change = abs(obj_W - prev_obj) / max(1.0, abs(prev_obj))
+
+        if rel_change < tol:
             print("convergence at: ",k)
             break
+        prev_obj = obj_W
     return W_out
 """""
         for j in range(N-3):
@@ -230,23 +254,28 @@ def subGradientDescent(x,y,N,Lapda,Alpha=1e-2, tol=1e-4):
 for i in range(3,N-3):
     x_slice = np.vstack((y[i-1],y[i-2],y[i-3]))
     x[:,i] = x_slice.squeeze()
-
+Max_Lapda = 8
 best_mse1 = np.inf
-lapda_space = np.linspace(0,2,6)
-for l in lapda_space:
+lapda_space1 = np.linspace(3,10,Max_Lapda)
+mse_convex = []
+for l in lapda_space1:
     w_temp_double = convexSolve_all(x,y,N,l)
     mse_w_double = np.mean((w_temp_double - w_true)**2)
+    mse_convex.append(mse_w_double)
     if mse_w_double < best_mse1:
         best_mse1 = mse_w_double
         w_double = w_temp_double
         print(l)
 
 best_mse2 = np.inf
-lapda_space = np.linspace(0,10,6)
-for l in lapda_space:
-    w_temp_GD = projectedSubGradientDescent(x,y,N,l)
+lapda_space2 = np.linspace(3,10,Max_Lapda)
+mse_GD = []
+for iter,l in enumerate(lapda_space2):
+    print("Lapda:",l,"iter:",iter)
+    w_temp_GD = subGradientDescent(x,y,N,l)
     #fix = np.hstack([np.zeros((3,3)),w_true])
     mse_w_GD = np.mean((w_temp_GD - w_true)**2)
+    mse_GD.append(mse_w_GD)
     if mse_w_GD < best_mse2:
         best_mse2 = mse_w_GD
         w_gradientDescent = w_temp_GD
@@ -293,4 +322,16 @@ plt.title('Batch estimation of piecewise-constant AR coefficients (gradient desc
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
+plt.show()
+
+#MSE values:
+plt.figure()
+plt.semilogy(lapda_space1, mse_convex, marker='o', label='Convex solver')
+plt.semilogy(lapda_space2, mse_GD, marker='s', label='Subgradient descent')
+
+plt.xlabel('Lambda')
+plt.ylabel('MSE (log scale)')
+plt.title('MSE vs Regularization Parameter')
+plt.legend()
+plt.grid(True, which='both')
 plt.show()

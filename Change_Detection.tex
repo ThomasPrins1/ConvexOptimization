@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Mar 16 12:59:05 2025
+Created on Sun Jan 11 14:17 2026
 
 @author: user
 @studentID: 5885221
@@ -36,17 +36,6 @@ w_gradientDescent = np.zeros((3, N))
 w_prev = np.zeros((3, 1))
 iterMax = 30000
 eps = 1e-8
-
-# optimized values of a,b,c assuming no infrequent switching, not solvable cause 3 unknowns and 1 equation:
-""""
-for i in range(6,N-3):
-    x[i,:] = np.array(([y[i-1],y[i-2],y[i-3]]))
-    test = x[i,:].T@x[i,:]
-    print(test)
-    print(x[i])
-    w[i] = np.linalg.inv(x[i]@x[i].T)@x[i].T*y[i]
-    print(w[i])
-"""
 
 """ Functions """
 def convexSolve_all(x,y,N,Lapda_value):
@@ -183,8 +172,6 @@ def subGradientDescent(x,y,N,Lapda, Alpha0=1e-1, tol=5e-7, C = 30):
         W_tmp = W_out - Alpha_value*subgradient
         W_out = project_total_change(W_tmp, C)
 
-        #W_out = np.maximum(np.minimum(W_out,1.1),-1.1) # bound between -1 and 1 to improve convergence
-        #W_out[2,:] = np.maximum(np.minimum(W_out[2,:],0.5),-0.5)
         # check if objective changes with new iterations of W
         rel_change = abs(obj_W - prev_obj) / max(1.0, abs(prev_obj))
 
